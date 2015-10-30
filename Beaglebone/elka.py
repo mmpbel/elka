@@ -4,25 +4,40 @@
 import pygame
 from time import sleep
 
-f=open("/sys/ebb/gpio115/numberPresses")
+fBtn=open("/sys/ebb/gpio51/btnPressedBitMask", 'r+', 0)
+fLed=open("/sys/ebb/gpio51/ledStateBitMask", 'r+', 0)
 
 def readButtons():
-  f.flush()
-  sleep(1)
-  f.seek(0)
-  return int(f.readline())
+    global fBtn
+    fBtn.flush()
+    fBtn.seek(0)
+    return int(fBtn.readline())
 
-button = readButtons()
-newBtn = button
+def resetButtons():
+    global fBtn
+    fBtn.write("0")
 
-while button == newBtn:
-  newBtn = readButtons()
-  print newBtn
+if __name__ == "__main__":
 
-button = newBtn
+    i = 0
+    while True:
+        sleep(1)
 
-pygame.mixer.init()
-pygame.mixer.music.load("/home/elka/music/3.mp3")
-pygame.mixer.music.play()
-while pygame.mixer.music.get_busy() == True:
-  continue
+        fLed.write(str(++i & 3))
+
+        #print str(i & 3)
+        i += 1
+        
+        buttonMask = readButtons()
+
+        if buttonMask:
+            print buttonMask
+            for i in xrange(4):
+                if buttonMask & (1 << i):
+                    resetButtons()
+
+                    pygame.mixer.init()
+                    pygame.mixer.music.load("/home/elka/music/3.mp3")
+                    pygame.mixer.music.play()
+                    while pygame.mixer.music.get_busy() == True:
+                      continue
