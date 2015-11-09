@@ -31,7 +31,9 @@ MODULE_PARM_DESC(isRising, " Rising edge = 1 (default), Falling edge = 0");  ///
 #define btnInp_1        60       ///< GPIO_1[28] is 32*1+28=60 PIN_9_12
 #define btnInp_2        31       ///< GPIO_0[31] is 32*0+31=31 PIN_9_13
 #define btnInp_3        50       ///< GPIO_1[18] is 32*1+18=50 PIN_9_14
-#define pressDetectInp  51       ///< GPIO_1[19] is 32*1+19=51 PIN_9_16
+#define btnInp_4        50       ///< GPIO_2[2]  is 32*2+2=66 PIN_8_07
+#define btnInp_5        50       ///< GPIO_2[3]  is 32*2+3=67 PIN_8_08
+#define pressDetectInp  2        ///< GPIO_1[19] is 32*0+2 =2  PIN_9_22
 
 static struct gpio btn_gpios[] =
 {
@@ -39,26 +41,15 @@ static struct gpio btn_gpios[] =
     { btnInp_1, GPIOF_DIR_IN | GPIOF_EXPORT_DIR_FIXED, "Btn 1" },
     { btnInp_2, GPIOF_DIR_IN | GPIOF_EXPORT_DIR_FIXED, "Btn 2" },
     { btnInp_3, GPIOF_DIR_IN | GPIOF_EXPORT_DIR_FIXED, "Btn 3" },
+    { btnInp_4, GPIOF_DIR_IN | GPIOF_EXPORT_DIR_FIXED, "Btn 4" },
+    { btnInp_5, GPIOF_DIR_IN | GPIOF_EXPORT_DIR_FIXED, "Btn 5" },
     { pressDetectInp, GPIOF_DIR_IN, "Detect in" }
-};
-
-#define     ledOut_0    3            ///< GPIO_0[3] is 32*0+3=3 PIN_9_21
-#define     ledOut_1    2            ///< GPIO_0[2] is 32*0+2=2 PIN_9_22
-
-#define LED_0_MASK  (1 << 0)
-#define LED_1_MASK  (1 << 1)
-
-static struct gpio led_gpios[] =
-{
-    { ledOut_0, GPIOF_OUT_INIT_LOW | GPIOF_EXPORT_DIR_FIXED, "LED 0" },
-    { ledOut_1, GPIOF_OUT_INIT_LOW | GPIOF_EXPORT_DIR_FIXED, "LED 1" }
 };
 
 static char   gpioName[8] = "gpioXXX";      ///< Null terminated default string -- just in case
 static int    irqNumber;                    ///< Used to share the IRQ number within this file
 static int    numberPresses = 0;            ///< For information, store the number of button presses
 static int    btnPressedBitMask = 0;        ///< For information, store the bit mask of pressed buttons
-static int    ledStateBitMask = 0;          ///< For information, store the bit mask of led state
 
 static bool   isDebounce = 1;               ///< Use to store the debounce state (on by default)
 static struct timespec ts_last, ts_current, ts_diff;  ///< timespecs from linux/time.h (has nano precision)
@@ -116,23 +107,6 @@ static ssize_t btnPressedBitMask_store (struct kobject *kobj, struct kobj_attrib
     return count;
 }
 
-/** @brief Displays if the LED is on or off */
-static ssize_t ledStateBitMask_show (struct kobject *kobj, struct kobj_attribute *attr, char *buf)
-{
-    return sprintf(buf, "%d\n", ledStateBitMask);
-}
-
-static ssize_t ledStateBitMask_store (struct kobject *kobj, struct kobj_attribute *attr,
-                                   const char *buf, size_t count)
-{
-    sscanf(buf, "%du", &ledStateBitMask);
-
-    gpio_set_value(ledOut_0, ledStateBitMask & LED_0_MASK);      // Set the physical LED accordingly
-    gpio_set_value(ledOut_1, ledStateBitMask & LED_1_MASK);      // Set the physical LED accordingly
-
-    return count;
-}
-
 /** @brief Displays the last time the button was pressed -- manually output the date (no localization) */
 static ssize_t lastTime_show (struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
@@ -176,7 +150,6 @@ static ssize_t isDebounce_store(struct kobject *kobj, struct kobj_attribute *att
 static struct kobj_attribute count_attr = __ATTR(numberPresses, 0666, numberPresses_show, numberPresses_store);
 static struct kobj_attribute debounce_attr = __ATTR(isDebounce, 0666, isDebounce_show, isDebounce_store);
 static struct kobj_attribute buttons_attr = __ATTR(btnPressedBitMask, 0666, btnPressedBitMask_show, btnPressedBitMask_store);
-static struct kobj_attribute leds_attr = __ATTR(ledStateBitMask, 0666, ledStateBitMask_show, ledStateBitMask_store);
 
 /**  The __ATTR_RO macro defines a read-only attribute. There is no need to identify that the
  *  function is called _show, but it must be present. __ATTR_WO can be  used for a write-only
@@ -191,7 +164,6 @@ static struct kobj_attribute diff_attr  = __ATTR_RO(diffTime);  ///< the differe
 static struct attribute *ebb_attrs[] = {
       &count_attr.attr,                  ///< The number of button presses
       &buttons_attr.attr,                ///< The bit mask of pressed buttons
-      &leds_attr.attr,                  ///< Is the LED on or off?
       &time_attr.attr,                   ///< Time of the last button press in HH:MM:SS:NNNNNNNNN
       &diff_attr.attr,                   ///< The difference in time between the last two presses
       &debounce_attr.attr,               ///< Is the debounce state true or false
@@ -244,14 +216,6 @@ static int __init ebbButton_init (void)
     getnstimeofday(&ts_last);                          // set the last time to be the current time
     ts_diff = timespec_sub(ts_last, ts_last);          // set the initial time difference to be 0
 
-    // Set LED outputs. It is a GPIO in output mode and will be off by default
-    result = gpio_request_array(led_gpios, ARRAY_SIZE(led_gpios));
-    if (result)
-    {
-        printk(KERN_ALERT "EBB Button: failed to request output array\n");
-        return result;
-    }
-
     // Set button outputs. It is a GPIO in input mode
     result = gpio_request_array(btn_gpios, ARRAY_SIZE(btn_gpios));
     if (result)
@@ -289,10 +253,6 @@ static void __exit ebbButton_exit(void)
     printk(KERN_INFO "EBB Button: The button was pressed %d times\n", numberPresses);
     kobject_put(ebb_kobj);                   // clean up -- remove the kobject sysfs entry
     free_irq(irqNumber, NULL);               // Free the IRQ number, no *dev_id required in this case
-    // free outputs
-    gpio_set_value(ledOut_0, 0);              // Turn the LED off, makes it clear the device was unloaded
-    gpio_set_value(ledOut_1, 0);              // Turn the LED off, makes it clear the device was unloaded
-    gpio_free_array(led_gpios, ARRAY_SIZE(led_gpios));
     // free inputs
     gpio_free_array(btn_gpios, ARRAY_SIZE(btn_gpios));
 
